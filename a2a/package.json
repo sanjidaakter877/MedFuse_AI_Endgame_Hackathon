@@ -1,0 +1,34 @@
+{
+  "name": "medfuse-a2a",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm run dev:medication\" \"npm run dev:lab\" \"npm run dev:care-gap\" \"npm run dev:orchestrator\"",
+    "dev:medication": "tsx agents/medication/server.ts",
+    "dev:lab": "tsx agents/lab/server.ts",
+    "dev:care-gap": "tsx agents/care-gap/server.ts",
+    "dev:orchestrator": "tsx agents/orchestrator/server.ts",
+    "build": "tsc && tsc-alias",
+    "start:medication": "node dist/agents/medication/server.js",
+    "start:lab": "node dist/agents/lab/server.js",
+    "start:care-gap": "node dist/agents/care-gap/server.js",
+    "start:orchestrator": "node dist/agents/orchestrator/server.js"
+  },
+  "dependencies": {
+    "@a2a-js/sdk": "^0.3.10",
+    "@google/adk": "^0.3.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "uuid": "^11.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "@types/uuid": "^10.0.0",
+    "concurrently": "^9.0.0",
+    "tsc-alias": "^1.8.10",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.3"
+  }
+}
