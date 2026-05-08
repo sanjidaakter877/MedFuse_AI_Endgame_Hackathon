@@ -24,18 +24,16 @@ A team of specialized AI agents analyzes real **FHIR R4** patient data in parall
 
 ```
 Clinician Query
-      ↓
- Patient Match Agent      → confirms patient identity across sources
-      ↓
- Data Fusion Agent        → builds unified clinical timeline
-      ↓
- ┌─────────────────────────────────────────┐
- │  Medication Agent  │  Lab Agent  │  Care Gap Agent  │  Context Agent  │
- └─────────────────────────────────────────┘
-      ↓
- Risk Fusion & Escalation Agent   → combines all signals into one decision
-      ↓
- Clinical Summary (LLM narrative)
+        ↓
+Patient Match Agent       → confirms patient identity across sources
+        ↓
+Data Fusion Agent         → builds unified clinical timeline
+        ↓
+  Medication Agent · Lab Agent · Care Gap Agent · Context Agent
+        ↓
+Risk Fusion & Escalation Agent  → combines all signals into one decision
+        ↓
+Clinical Summary (LLM narrative)
 ```
 
 **Risk levels**: 🟢 Low → 🟡 Moderate → 🔴 High → 🚨 Urgent
