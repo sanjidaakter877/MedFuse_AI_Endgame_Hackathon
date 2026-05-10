@@ -1,19 +1,10 @@
 import "dotenv/config";
-import express, { type Application } from "express";
+import express, { type Application, type Request, type Response } from "express";
 import { v4 as uuidv4 } from "uuid";
 import { GoogleGenAI } from "@google/genai";
 import { DefaultRequestHandler, InMemoryTaskStore } from "@a2a-js/sdk/server";
-import {
-  agentCardHandler,
-  jsonRpcHandler,
-  UserBuilder,
-} from "@a2a-js/sdk/server/express";
+import { agentCardHandler } from "@a2a-js/sdk/server/express";
 import type { AgentCard, Message } from "@a2a-js/sdk";
-import type {
-  AgentExecutor,
-  ExecutionEventBus,
-  RequestContext,
-} from "@a2a-js/sdk/server";
 import { apiKeyMiddleware } from "./middleware";
 import { resolveFhirBundle } from "./fhir-bundle";
 import { runMedFuseAgent } from "@/lib/agents/medfuse-agent";
@@ -36,74 +27,26 @@ Write a 2-3 sentence clinical summary for a physician covering:
 3. Recommended action
 Be concise and clinical. Ground your response only in the assessment data provided.`;
 
-class DirectGeminiExecutor implements AgentExecutor {
-  private readonly fhirExtensionUri?: string;
+async function runAssessment(userText: string, metadata: Record<string, unknown>, fhirExtensionUri?: string): Promise<string> {
+  const fhirCtx = buildFhirContext(metadata, fhirExtensionUri);
+  const hasFhirCredentials = !!(fhirCtx.fhirUrl && fhirCtx.patientId);
 
-  constructor(_model: string, fhirExtensionUri?: string) {
-    this.fhirExtensionUri = fhirExtensionUri;
-  }
-
-  async execute(
-    requestContext: RequestContext,
-    eventBus: ExecutionEventBus
-  ): Promise<void> {
-    const { userMessage, contextId } = requestContext;
-    const userText = extractText(userMessage);
-    console.log("[executor] userText:", userText.slice(0, 200));
-
-    let finalText = "";
-
-    try {
-      const fhirCtx = buildFhirContext(
-        (userMessage.metadata ?? {}) as Record<string, unknown>,
-        this.fhirExtensionUri
-      );
-
-      const hasFhirCredentials = !!(fhirCtx.fhirUrl && fhirCtx.patientId);
-
-      if (hasFhirCredentials) {
-        // Real patient — fetch FHIR data and run full pipeline
-        const bundle = await resolveFhirBundle(fhirCtx);
-        const result = await runMedFuseAgent(bundle);
-        const assessment = {
-          patient: bundle.Patient.name,
-          riskLevel: result.risk.riskLevel,
-          recommendedAction: result.risk.recommendedAction,
-          medicationSignal: result.medication.summary,
-          labSignal: result.lab.summary,
-          careGapSignal: result.caregap.summary,
-          clinicalContext: result.context.summary,
-        };
-        const prompt = `Patient request: ${userText || "Run a full risk assessment"}\n\nMedFuse assessment results:\n${JSON.stringify(assessment, null, 2)}`;
-        finalText = await generateWithFallback(prompt);
-      } else {
-        // No FHIR credentials — use message text directly as clinical context
-        const prompt = `${userText || "Run a full risk assessment"}`;
-        finalText = await generateWithFallback(prompt);
-      }
-    } catch (err) {
-      console.error("[executor] error:", err);
-      finalText = `Error: ${err instanceof Error ? err.message : String(err)}`;
-    }
-
-    console.log("[executor] finalText:", finalText.slice(0, 200));
-
-    const reply: Message = {
-      kind: "message",
-      messageId: uuidv4(),
-      role: "agent",
-      parts: [{ kind: "text", text: finalText || "(no response)" }],
-      taskId: requestContext.taskId,
-      contextId,
+  if (hasFhirCredentials) {
+    const bundle = await resolveFhirBundle(fhirCtx);
+    const result = await runMedFuseAgent(bundle);
+    const assessment = {
+      patient: bundle.Patient.name,
+      riskLevel: result.risk.riskLevel,
+      recommendedAction: result.risk.recommendedAction,
+      medicationSignal: result.medication.summary,
+      labSignal: result.lab.summary,
+      careGapSignal: result.caregap.summary,
+      clinicalContext: result.context.summary,
     };
-
-    eventBus.publish(reply);
-    eventBus.finished();
+    return generateWithFallback(`Patient request: ${userText || "Run a full risk assessment"}\n\nMedFuse assessment results:\n${JSON.stringify(assessment, null, 2)}`);
   }
 
-  async cancelTask(_taskId: string, _eventBus: ExecutionEventBus): Promise<void> {
-    // no-op
-  }
+  return generateWithFallback(userText || "Run a full risk assessment for an unknown patient with no clinical data.");
 }
 
 function buildFhirContext(
@@ -129,7 +72,6 @@ function buildFhirContext(
 }
 
 async function generateWithFallback(prompt: string): Promise<string> {
-  // Try Gemini first
   const geminiKey = process.env["GOOGLE_API_KEY"] ?? process.env["GOOGLE_GENAI_API_KEY"] ?? "";
   if (geminiKey) {
     try {
@@ -146,7 +88,6 @@ async function generateWithFallback(prompt: string): Promise<string> {
     }
   }
 
-  // Fall back to Groq
   const groqKey = process.env["GROQ_API_KEY"] ?? "";
   if (!groqKey) throw new Error("No LLM available — set GOOGLE_API_KEY or GROQ_API_KEY");
   const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -166,10 +107,10 @@ async function generateWithFallback(prompt: string): Promise<string> {
   return (json.choices?.[0]?.message?.content ?? "").trim();
 }
 
-function extractText(message: Message): string {
-  return message.parts
-    .filter((p) => typeof (p as unknown as Record<string, unknown>)["text"] === "string")
-    .map((p) => (p as unknown as { text: string }).text)
+function extractText(parts: unknown[]): string {
+  return parts
+    .filter((p) => typeof (p as Record<string, unknown>)["text"] === "string")
+    .map((p) => (p as { text: string }).text)
     .join("\n")
     .trim();
 }
@@ -184,14 +125,9 @@ function buildAgentCard(options: Required<CreateA2aAppOptions>): AgentCard {
     preferredTransport: "JSONRPC",
     defaultInputModes: ["text/plain"],
     defaultOutputModes: ["text/plain"],
-    // Required by Prompt Opinion platform (A2A v1 endpoint declaration)
     ...({
       supportedInterfaces: [
-        {
-          url: options.url,
-          protocolBinding: "JSONRPC",
-          protocolVersion: "0.3.0",
-        },
+        { url: options.url, protocolBinding: "JSONRPC", protocolVersion: "0.3.0" },
       ],
     } as object),
     capabilities: {
@@ -223,33 +159,28 @@ function buildAgentCard(options: Required<CreateA2aAppOptions>): AgentCard {
     ],
     ...(options.requireApiKey
       ? {
-          securitySchemes: {
-            apiKey: { type: "apiKey", in: "header", name: "X-API-Key" },
-          },
+          securitySchemes: { apiKey: { type: "apiKey", in: "header", name: "X-API-Key" } },
           security: [{ apiKey: [] as string[] }],
         }
       : {}),
   };
 }
 
-/**
- * Creates a fully wired Express app implementing the A2A protocol:
- * - GET  /.well-known/agent-card.json  (always public — no auth)
- * - POST /                             (A2A JSON-RPC, optionally API-key gated)
- */
 export function createA2aApp(options: CreateA2aAppOptions): Application {
   const resolved = {
     version: "1.0.0",
     fhirExtensionUri: "",
-    requireApiKey: true,
+    requireApiKey: false,
     model: "gemini-2.0-flash",
     ...options,
   };
 
   const agentCard = buildAgentCard(resolved);
   const taskStore = new InMemoryTaskStore();
-  const executor = new DirectGeminiExecutor(resolved.model, resolved.fhirExtensionUri);
-  const requestHandler = new DefaultRequestHandler(agentCard, taskStore, executor);
+  const requestHandler = new DefaultRequestHandler(agentCard, taskStore, {
+    execute: async () => {},
+    cancelTask: async () => {},
+  });
 
   const app = express();
   app.use(express.json());
@@ -266,27 +197,85 @@ export function createA2aApp(options: CreateA2aAppOptions): Application {
     });
   });
 
-  // Agent card is always public — register before any auth middleware.
-  // agentCardHandler returns a Router (not a plain handler), so use app.use().
-  app.use(
-    "/.well-known/agent-card.json",
-    agentCardHandler({ agentCardProvider: requestHandler })
-  );
+  app.use("/.well-known/agent-card.json", agentCardHandler({ agentCardProvider: requestHandler }));
 
   if (resolved.requireApiKey) {
     app.use(apiKeyMiddleware);
   }
 
-  app.post(
-    "/",
-    (req, _res, next) => {
-      if (req.body?.method === "SendMessage") {
-        req.body.method = "message/send";
-      }
-      next();
-    },
-    jsonRpcHandler({ requestHandler, userBuilder: UserBuilder.noAuthentication })
-  );
+  // Custom JSON-RPC handler that returns a Task (kind:"task") — required by Prompt Opinion
+  app.post("/", (req: Request, res: Response) => {
+    const { id, method, params } = req.body ?? {};
+    const normalizedMethod = method === "SendMessage" ? "message/send" : method;
+
+    if (normalizedMethod !== "message/send") {
+      res.json({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } });
+      return;
+    }
+
+    const message = params?.message ?? params?.params?.message;
+    const parts: unknown[] = Array.isArray(message?.parts) ? message.parts : [];
+    const userText = extractText(parts);
+    const metadata = (message?.metadata ?? {}) as Record<string, unknown>;
+
+    const taskId = uuidv4();
+    const contextId = message?.contextId ?? uuidv4();
+    const messageId = uuidv4();
+    const timestamp = new Date().toISOString();
+
+    console.log("[handler] userText:", userText.slice(0, 200));
+
+    runAssessment(userText, metadata, resolved.fhirExtensionUri || undefined)
+      .then((text) => {
+        console.log("[handler] result:", text.slice(0, 200));
+        const agentMessage: Message = {
+          kind: "message",
+          messageId,
+          role: "agent",
+          parts: [{ kind: "text", text: text || "(no response)" }],
+          taskId,
+          contextId,
+        };
+        res.json({
+          jsonrpc: "2.0",
+          id,
+          result: {
+            kind: "task",
+            id: taskId,
+            contextId,
+            status: {
+              state: "completed",
+              message: agentMessage,
+              timestamp,
+            },
+          },
+        });
+      })
+      .catch((err: unknown) => {
+        console.error("[handler] error:", err);
+        res.json({
+          jsonrpc: "2.0",
+          id,
+          result: {
+            kind: "task",
+            id: taskId,
+            contextId,
+            status: {
+              state: "failed",
+              message: {
+                kind: "message",
+                messageId,
+                role: "agent",
+                parts: [{ kind: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+                taskId,
+                contextId,
+              },
+              timestamp,
+            },
+          },
+        });
+      });
+  });
 
   return app;
 }
