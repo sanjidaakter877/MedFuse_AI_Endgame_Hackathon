@@ -59,7 +59,7 @@ class DirectGeminiExecutor implements AgentExecutor {
         (userMessage.metadata ?? {}) as Record<string, unknown>,
         this.fhirExtensionUri
       );
-      const bundle = resolveFhirBundle(fhirCtx);
+      const bundle = await resolveFhirBundle(fhirCtx);
       const result = await runMedFuseAgent(bundle);
 
       const assessment = {
