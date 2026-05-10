@@ -54,26 +54,33 @@ class DirectGeminiExecutor implements AgentExecutor {
     let finalText = "";
 
     try {
-      // Run MedFuse pipeline directly (no ADK runner)
       const fhirCtx = buildFhirContext(
         (userMessage.metadata ?? {}) as Record<string, unknown>,
         this.fhirExtensionUri
       );
-      const bundle = await resolveFhirBundle(fhirCtx);
-      const result = await runMedFuseAgent(bundle);
 
-      const assessment = {
-        patient: bundle.Patient.name,
-        riskLevel: result.risk.riskLevel,
-        recommendedAction: result.risk.recommendedAction,
-        medicationSignal: result.medication.summary,
-        labSignal: result.lab.summary,
-        careGapSignal: result.caregap.summary,
-        clinicalContext: result.context.summary,
-      };
+      const hasFhirCredentials = !!(fhirCtx.fhirUrl && fhirCtx.patientId);
 
-      const prompt = `Patient request: ${userText || "Run a full risk assessment"}\n\nMedFuse assessment results:\n${JSON.stringify(assessment, null, 2)}`;
-      finalText = await generateWithFallback(prompt);
+      if (hasFhirCredentials) {
+        // Real patient — fetch FHIR data and run full pipeline
+        const bundle = await resolveFhirBundle(fhirCtx);
+        const result = await runMedFuseAgent(bundle);
+        const assessment = {
+          patient: bundle.Patient.name,
+          riskLevel: result.risk.riskLevel,
+          recommendedAction: result.risk.recommendedAction,
+          medicationSignal: result.medication.summary,
+          labSignal: result.lab.summary,
+          careGapSignal: result.caregap.summary,
+          clinicalContext: result.context.summary,
+        };
+        const prompt = `Patient request: ${userText || "Run a full risk assessment"}\n\nMedFuse assessment results:\n${JSON.stringify(assessment, null, 2)}`;
+        finalText = await generateWithFallback(prompt);
+      } else {
+        // No FHIR credentials — use message text directly as clinical context
+        const prompt = `${userText || "Run a full risk assessment"}`;
+        finalText = await generateWithFallback(prompt);
+      }
     } catch (err) {
       console.error("[executor] error:", err);
       finalText = `Error: ${err instanceof Error ? err.message : String(err)}`;
