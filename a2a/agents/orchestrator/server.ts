@@ -1,7 +1,4 @@
-import dotenv from "dotenv";
-// Load from Render secret file first, fall back to local .env
-dotenv.config({ path: "/etc/secrets/.env" });
-dotenv.config(); // local .env (no-op if already loaded)
+import "dotenv/config";
 import { createA2aApp } from "../../shared/app-factory";
 
 const PORT = Number(process.env["PORT"] ?? process.env["ORCHESTRATOR_PORT"] ?? 3100);
