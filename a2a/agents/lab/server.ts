@@ -3,7 +3,7 @@ import { createA2aApp } from "../../shared/app-factory";
 
 const PORT = Number(process.env["LAB_PORT"] ?? 3102);
 const URL = process.env["LAB_AGENT_URL"] ?? `http://localhost:${PORT}`;
-const FHIR_EXT = process.env["FHIR_EXTENSION_URI"] ?? "http://localhost:5139/schemas/a2a/v1/fhir-context";
+const FHIR_EXT = process.env["FHIR_EXTENSION_URI"] ?? "https://app.promptopinion.ai/schemas/a2a/v1/fhir-context";
 
 const app = createA2aApp({
   name: "medfuse_lab_test_agent",

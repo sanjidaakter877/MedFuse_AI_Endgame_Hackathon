@@ -2,8 +2,6 @@ import "dotenv/config";
 import express, { type Application, type Request, type Response } from "express";
 import { v4 as uuidv4 } from "uuid";
 import { GoogleGenAI } from "@google/genai";
-import { DefaultRequestHandler, InMemoryTaskStore } from "@a2a-js/sdk/server";
-import { agentCardHandler } from "@a2a-js/sdk/server/express";
 import type { AgentCard, Message } from "@a2a-js/sdk";
 import { apiKeyMiddleware } from "./middleware";
 import { resolveFhirBundle } from "./fhir-bundle";
@@ -115,36 +113,42 @@ function extractText(parts: unknown[]): string {
     .trim();
 }
 
-function buildAgentCard(options: Required<CreateA2aAppOptions>): AgentCard {
+function buildAgentCard(options: Required<CreateA2aAppOptions>): Record<string, unknown> {
+  const extensions = options.fhirExtensionUri
+    ? [
+        {
+          uri: options.fhirExtensionUri,
+          required: false,
+          description: "FHIR context allowing MedFuse to query a FHIR server securely",
+          params: {
+            scopes: [
+              { name: "patient/Patient.rs", required: true },
+              { name: "patient/Condition.rs" },
+              { name: "patient/MedicationRequest.rs" },
+              { name: "patient/Observation.rs" },
+              { name: "patient/Procedure.rs" },
+              { name: "patient/AllergyIntolerance.rs" },
+            ],
+          },
+        },
+      ]
+    : undefined;
+
   return {
     name: options.name,
     description: options.description,
-    url: options.url,
     version: options.version,
-    protocolVersion: "0.3.0",
-    preferredTransport: "JSONRPC",
+    protocolVersion: "1.0",
+    supportedInterfaces: [
+      { url: options.url, protocolBinding: "JSONRPC", protocolVersion: "1.0" },
+      { url: options.url, protocolBinding: "JSONRPC", protocolVersion: "0.3" },
+    ],
     defaultInputModes: ["text/plain"],
     defaultOutputModes: ["text/plain"],
-    ...({
-      supportedInterfaces: [
-        { url: options.url, protocolBinding: "JSONRPC", protocolVersion: "0.3.0" },
-      ],
-    } as object),
     capabilities: {
       streaming: false,
       pushNotifications: false,
-      stateTransitionHistory: true,
-      ...(options.fhirExtensionUri
-        ? {
-            extensions: [
-              {
-                uri: options.fhirExtensionUri,
-                required: false,
-                description: "FHIR patient context credentials (patientId, fhirUrl, fhirToken)",
-              },
-            ],
-          }
-        : {}),
+      ...(extensions ? { extensions } : {}),
     },
     skills: [
       {
@@ -176,11 +180,6 @@ export function createA2aApp(options: CreateA2aAppOptions): Application {
   };
 
   const agentCard = buildAgentCard(resolved);
-  const taskStore = new InMemoryTaskStore();
-  const requestHandler = new DefaultRequestHandler(agentCard, taskStore, {
-    execute: async () => {},
-    cancelTask: async () => {},
-  });
 
   const app = express();
   app.use(express.json());
@@ -197,7 +196,9 @@ export function createA2aApp(options: CreateA2aAppOptions): Application {
     });
   });
 
-  app.use("/.well-known/agent-card.json", agentCardHandler({ agentCardProvider: requestHandler }));
+  app.get("/.well-known/agent-card.json", (_req, res) => {
+    res.json(agentCard);
+  });
 
   if (resolved.requireApiKey) {
     app.use(apiKeyMiddleware);
