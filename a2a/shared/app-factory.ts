@@ -2,7 +2,7 @@ import "dotenv/config";
 import express, { type Application, type Request, type Response } from "express";
 import { v4 as uuidv4 } from "uuid";
 import { GoogleGenAI } from "@google/genai";
-import type { AgentCard, Message } from "@a2a-js/sdk";
+import type { Message } from "@a2a-js/sdk";
 import { apiKeyMiddleware } from "./middleware";
 import { resolveFhirBundle } from "./fhir-bundle";
 import { runMedFuseAgent } from "@/lib/agents/medfuse-agent";
@@ -170,6 +170,19 @@ function buildAgentCard(options: Required<CreateA2aAppOptions>): Record<string, 
   };
 }
 
+function prefersV1(req: Request): boolean {
+  const version = req.header("a2a-version") ?? req.header("A2A-Version") ?? "";
+  return !version.startsWith("0.3");
+}
+
+function sendTaskResult(res: Response, id: unknown, task: Record<string, unknown>, useV1: boolean): void {
+  res.json({
+    jsonrpc: "2.0",
+    id,
+    result: useV1 ? { task } : task,
+  });
+}
+
 export function createA2aApp(options: CreateA2aAppOptions): Application {
   const resolved = {
     version: "1.0.0",
@@ -208,6 +221,7 @@ export function createA2aApp(options: CreateA2aAppOptions): Application {
   app.post("/", (req: Request, res: Response) => {
     const { id, method, params } = req.body ?? {};
     const normalizedMethod = method === "SendMessage" ? "message/send" : method;
+    const useV1 = prefersV1(req);
 
     if (normalizedMethod !== "message/send") {
       res.json({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } });
@@ -237,10 +251,10 @@ export function createA2aApp(options: CreateA2aAppOptions): Application {
           taskId,
           contextId,
         };
-        res.json({
-          jsonrpc: "2.0",
+        sendTaskResult(
+          res,
           id,
-          result: {
+          {
             kind: "task",
             id: taskId,
             contextId,
@@ -250,14 +264,15 @@ export function createA2aApp(options: CreateA2aAppOptions): Application {
               timestamp,
             },
           },
-        });
+          useV1
+        );
       })
       .catch((err: unknown) => {
         console.error("[handler] error:", err);
-        res.json({
-          jsonrpc: "2.0",
+        sendTaskResult(
+          res,
           id,
-          result: {
+          {
             kind: "task",
             id: taskId,
             contextId,
@@ -274,7 +289,8 @@ export function createA2aApp(options: CreateA2aAppOptions): Application {
               timestamp,
             },
           },
-        });
+          useV1
+        );
       });
   });
 
