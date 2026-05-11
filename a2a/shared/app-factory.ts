@@ -137,11 +137,16 @@ function buildAgentCard(options: Required<CreateA2aAppOptions>): Record<string, 
   return {
     name: options.name,
     description: options.description,
+    url: options.url,
     version: options.version,
-    protocolVersion: "1.0",
+    protocolVersion: "0.3.0",
+    preferredTransport: "JSONRPC",
+    additionalInterfaces: [
+      { url: options.url, transport: "JSONRPC" },
+    ],
     supportedInterfaces: [
+      { url: options.url, protocolBinding: "JSONRPC", protocolVersion: "0.3.0" },
       { url: options.url, protocolBinding: "JSONRPC", protocolVersion: "1.0" },
-      { url: options.url, protocolBinding: "JSONRPC", protocolVersion: "0.3" },
     ],
     defaultInputModes: ["text/plain"],
     defaultOutputModes: ["text/plain"],
@@ -170,16 +175,11 @@ function buildAgentCard(options: Required<CreateA2aAppOptions>): Record<string, 
   };
 }
 
-function prefersV1(req: Request): boolean {
-  const version = req.header("a2a-version") ?? req.header("A2A-Version") ?? "";
-  return !version.startsWith("0.3");
-}
-
-function sendTaskResult(res: Response, id: unknown, task: Record<string, unknown>, useV1: boolean): void {
+function sendTaskResult(res: Response, id: unknown, task: Record<string, unknown>): void {
   res.json({
     jsonrpc: "2.0",
     id,
-    result: useV1 ? { task } : task,
+    result: task,
   });
 }
 
@@ -221,7 +221,6 @@ export function createA2aApp(options: CreateA2aAppOptions): Application {
   app.post("/", (req: Request, res: Response) => {
     const { id, method, params } = req.body ?? {};
     const normalizedMethod = method === "SendMessage" ? "message/send" : method;
-    const useV1 = prefersV1(req);
 
     if (normalizedMethod !== "message/send") {
       res.json({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } });
@@ -263,12 +262,19 @@ export function createA2aApp(options: CreateA2aAppOptions): Application {
               message: agentMessage,
               timestamp,
             },
+            artifacts: [
+              {
+                artifactId: `artifact-${taskId}`,
+                name: "MedFuse risk assessment",
+                parts: [{ kind: "text", text: text || "(no response)" }],
+              },
+            ],
           },
-          useV1
         );
       })
       .catch((err: unknown) => {
         console.error("[handler] error:", err);
+        const errorText = `Error: ${err instanceof Error ? err.message : String(err)}`;
         sendTaskResult(
           res,
           id,
@@ -282,14 +288,20 @@ export function createA2aApp(options: CreateA2aAppOptions): Application {
                 kind: "message",
                 messageId,
                 role: "agent",
-                parts: [{ kind: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+                parts: [{ kind: "text", text: errorText }],
                 taskId,
                 contextId,
               },
               timestamp,
             },
+            artifacts: [
+              {
+                artifactId: `artifact-${taskId}`,
+                name: "MedFuse risk assessment error",
+                parts: [{ kind: "text", text: errorText }],
+              },
+            ],
           },
-          useV1
         );
       });
   });
