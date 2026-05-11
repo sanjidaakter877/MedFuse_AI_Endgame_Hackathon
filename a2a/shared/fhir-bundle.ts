@@ -3,6 +3,8 @@ import type { FhirBundle } from "@/lib/types";
 
 export interface FhirContext {
   patientId?: string | null;
+  patientName?: string | null;
+  birthDate?: string | null;
   fhirUrl?: string | null;
   fhirToken?: string | null;
 }
@@ -17,7 +19,28 @@ export async function resolveFhirBundle(ctx: FhirContext): Promise<FhirBundle> {
       console.warn("[fhir] fetch failed, falling back to mock:", (err as Error).message);
     }
   }
-  return selectFhirBundle({ patientId: ctx.patientId ?? undefined });
+  const fallback = selectFhirBundle({ patientId: ctx.patientId ?? undefined });
+  if (!ctx.patientId || fallback.Patient.id === ctx.patientId) {
+    return fallback;
+  }
+
+  return {
+    Patient: {
+      id: ctx.patientId,
+      name: ctx.patientName ?? "Prompt Opinion patient",
+      birthDate: ctx.birthDate ?? "",
+      phone: "",
+      address: "",
+      insurance: "",
+    },
+    Condition: [],
+    MedicationRequest: [],
+    Observation: [],
+    AllergyIntolerance: [],
+    Encounter: [],
+    CarePlan: [],
+    Appointment: [],
+  };
 }
 
 async function fetchFromFhirServer(fhirUrl: string, patientId: string, fhirToken?: string): Promise<FhirBundle> {

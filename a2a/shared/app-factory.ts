@@ -26,10 +26,10 @@ Write a 2-3 sentence clinical summary for a physician covering:
 Be concise and clinical. Ground your response only in the assessment data provided.`;
 
 async function runAssessment(userText: string, metadata: Record<string, unknown>, fhirExtensionUri?: string): Promise<string> {
-  const fhirCtx = buildFhirContext(metadata, fhirExtensionUri);
+  const fhirCtx = buildFhirContext(metadata, userText, fhirExtensionUri);
   const hasFhirCredentials = !!(fhirCtx.fhirUrl && fhirCtx.patientId);
 
-  if (hasFhirCredentials) {
+  if (hasFhirCredentials || fhirCtx.patientId) {
     const bundle = await resolveFhirBundle(fhirCtx);
     const result = await runMedFuseAgent(bundle);
     const assessment = {
@@ -49,24 +49,71 @@ async function runAssessment(userText: string, metadata: Record<string, unknown>
 
 function buildFhirContext(
   metadata: Record<string, unknown>,
+  userText: string,
   fhirExtensionUri?: string
-): { patientId?: string; fhirUrl?: string; fhirToken?: string } {
+): { patientId?: string; patientName?: string; birthDate?: string; fhirUrl?: string; fhirToken?: string } {
   const fhirBlock = fhirExtensionUri
     ? (metadata[fhirExtensionUri] as Record<string, unknown> | undefined)
     : undefined;
 
-  const source =
-    fhirBlock ??
-    (Object.entries(metadata).find(([k]) => k.toLowerCase().includes("fhir"))
-      ?.[1] as Record<string, unknown> | undefined);
+  const source = fhirBlock ?? findFhirContext(metadata);
 
-  if (!source || typeof source !== "object") return {};
+  const textContext = parsePatientContextFromText(userText);
+  if (!source || typeof source !== "object") return textContext;
 
   return {
-    patientId: (source["patientId"] ?? source["patient_id"]) as string | undefined,
-    fhirUrl: (source["fhirUrl"] ?? source["fhir_url"]) as string | undefined,
-    fhirToken: (source["fhirToken"] ?? source["fhir_token"]) as string | undefined,
+    patientId: stringFrom(source, ["patientId", "patient_id", "patient", "subject", "subjectId"]) ?? textContext.patientId,
+    patientName: stringFrom(source, ["patientName", "patient_name", "name", "patientDisplay", "display"]) ?? textContext.patientName,
+    birthDate: stringFrom(source, ["birthDate", "birth_date", "dob"]) ?? textContext.birthDate,
+    fhirUrl: stringFrom(source, ["fhirUrl", "fhir_url", "serverUrl", "server_url", "baseUrl", "base_url", "iss"]),
+    fhirToken: stringFrom(source, ["fhirToken", "fhir_token", "accessToken", "access_token", "token", "bearerToken"]),
   };
+}
+
+function findFhirContext(metadata: Record<string, unknown>): Record<string, unknown> | undefined {
+  const direct = Object.entries(metadata).find(([key, value]) =>
+    typeof value === "object" && value !== null && key.toLowerCase().includes("fhir")
+  )?.[1] as Record<string, unknown> | undefined;
+
+  if (direct) return direct;
+
+  for (const value of Object.values(metadata)) {
+    if (!value || typeof value !== "object") continue;
+    const obj = value as Record<string, unknown>;
+    const nested = findFhirContext(obj);
+    if (nested) return nested;
+  }
+
+  if (
+    stringFrom(metadata, ["patientId", "patient_id", "patient", "subject", "subjectId"]) ||
+    stringFrom(metadata, ["fhirUrl", "fhir_url", "serverUrl", "server_url", "baseUrl", "base_url", "iss"])
+  ) {
+    return metadata;
+  }
+}
+
+function stringFrom(source: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "object" && value !== null) {
+      const nested = value as Record<string, unknown>;
+      const nestedValue = nested["id"] ?? nested["reference"] ?? nested["url"] ?? nested["value"];
+      if (typeof nestedValue === "string" && nestedValue.trim()) {
+        return nestedValue.replace(/^Patient\//, "").trim();
+      }
+    }
+  }
+}
+
+function parsePatientContextFromText(userText: string): { patientId?: string; patientName?: string; birthDate?: string } {
+  const patientId = userText.match(/\bID:\s*([0-9a-f-]{36})\b/i)?.[1];
+  const patientName = userText.match(/patient\s+([A-Za-z0-9]+(?:\s+[A-Za-z0-9]+)+)\s+\(ID:/i)?.[1]
+    ?? userText.match(/\(([^()]+),\s*\d+\s*yo\b/i)?.[1];
+  const birthDate = userText.match(/\bborn\s+(\d{4}-\d{2}-\d{2})\b/i)?.[1]
+    ?? userText.match(/\bDOB:\s*(\d{4}-\d{2}-\d{2})\b/i)?.[1];
+
+  return { patientId, patientName, birthDate };
 }
 
 async function generateWithFallback(prompt: string): Promise<string> {
@@ -230,7 +277,10 @@ export function createA2aApp(options: CreateA2aAppOptions): Application {
     const message = params?.message ?? params?.params?.message;
     const parts: unknown[] = Array.isArray(message?.parts) ? message.parts : [];
     const userText = extractText(parts);
-    const metadata = (message?.metadata ?? {}) as Record<string, unknown>;
+    const metadata = {
+      ...((params?.metadata ?? {}) as Record<string, unknown>),
+      ...((message?.metadata ?? {}) as Record<string, unknown>),
+    };
 
     const taskId = uuidv4();
     const contextId = message?.contextId ?? uuidv4();
