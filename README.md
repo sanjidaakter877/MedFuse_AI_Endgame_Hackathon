@@ -55,47 +55,6 @@ Clinical Summary (LLM narrative)
 
 ---
 
-## 🚀 Run Locally
-
-```bash
-# Install dependencies
-npm install
-
-# Start the dev server
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000)
-
-### A2A Agents (optional)
-
-```bash
-cd a2a
-npm install
-cp .env.example .env   # fill in your API keys
-npm run dev
-```
-
----
-
-## 🔑 Environment Variables
-
-Copy `.env.example` to `.env.local` and fill in:
-
-```env
-OPENAI_API_KEY=your-key-here   # optional — falls back to rules-based
-OPENAI_MODEL=gpt-4.1-mini
-```
-
-For the A2A layer, copy `a2a/.env.example` to `a2a/.env`:
-
-```env
-GOOGLE_GENAI_API_KEY=your-gemini-key
-GROQ_API_KEY=your-groq-key
-API_KEY_PRIMARY=medfuse-dev-key-primary
-```
-
----
 
 ## 🧠 Agents at a Glance
 
@@ -127,7 +86,3 @@ MedFuse/
 ```
 
 ---
-
-## 📄 License
-
-MIT
